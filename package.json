@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 43180",
     "build": "tsc -b && vite build",
+    "build:phone": "tsc -b && vite build --mode phone",
     "check": "node --experimental-strip-types src/lanczos.check.ts && node --experimental-strip-types src/realesrgan.check.ts",
     "lint": "oxlint src vite.config.ts",
     "preview": "vite preview --host 0.0.0.0 --port 43180"

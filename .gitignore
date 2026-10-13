@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+本地转2K.html
 *.local
 agent-tools
 

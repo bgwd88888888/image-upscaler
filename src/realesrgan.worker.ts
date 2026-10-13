@@ -1,4 +1,5 @@
 import * as ort from 'onnxruntime-web/webgpu'
+import phoneAssets from 'virtual:phone-assets'
 import { resizeRgbaLanczos } from './lanczos.ts'
 import {
   AI_DETAIL_PROFILE,
@@ -59,22 +60,14 @@ addEventListener('message', (event: MessageEvent<AiResizeRequest>) => {
 })
 
 async function run(request: AiResizeRequest) {
-  const base = ensureTrailingSlash(request.assetBaseUrl)
-  const modelBase = new URL('models/', base)
-  const runtimeBase = new URL('ort/', base)
-
   ort.env.wasm.numThreads = 1
   ort.env.wasm.proxy = false
-  ort.env.wasm.wasmPaths = runtimeBase.href
   ort.env.webgpu.powerPreference = 'high-performance'
 
   postProgress('model', 0)
-  const model = await fetchBytes(new URL(MODEL_FILE, modelBase), (percent) => {
-    postProgress('model', Math.round(percent * 0.04))
-  })
-  const modelData = await fetchBytes(new URL(MODEL_DATA_FILE, modelBase), (percent) => {
-    postProgress('model', 4 + Math.round(percent * 0.96))
-  })
+  const { model, modelData } = phoneAssets
+    ? await loadEmbeddedAssets(phoneAssets)
+    : await loadRemoteAssets(request.assetBaseUrl)
 
   const source = new Uint8ClampedArray(request.buffer)
   postProgress('preparing', 0)
@@ -202,6 +195,47 @@ async function inferTile(session: ort.InferenceSession, data: Float32Array) {
   } finally {
     input.dispose()
   }
+}
+
+async function loadEmbeddedAssets(assets: NonNullable<typeof phoneAssets>) {
+  const wasm = decodeBase64(assets.wasm)
+  postProgress('model', 15)
+  const mjs = decodeBase64(assets.mjs)
+  ort.env.wasm.wasmBinary = wasm
+  ort.env.wasm.wasmPaths = {
+    mjs: URL.createObjectURL(new Blob([mjs], { type: 'text/javascript' })),
+  }
+  postProgress('model', 35)
+  const model = decodeBase64(assets.model)
+  postProgress('model', 70)
+  const modelData = decodeBase64(assets.modelData)
+  postProgress('model', 100)
+  return { model, modelData }
+}
+
+async function loadRemoteAssets(assetBaseUrl: string) {
+  const base = ensureTrailingSlash(assetBaseUrl)
+  const modelBase = new URL('models/', base)
+  const runtimeBase = new URL('ort/', base)
+  ort.env.wasm.wasmPaths = runtimeBase.href
+  const model = await fetchBytes(new URL(MODEL_FILE, modelBase), (percent) => {
+    postProgress('model', Math.round(percent * 0.04))
+  })
+  const modelData = await fetchBytes(new URL(MODEL_DATA_FILE, modelBase), (percent) => {
+    postProgress('model', 4 + Math.round(percent * 0.96))
+  })
+  return { model, modelData }
+}
+
+function decodeBase64(b64: string) {
+  const binary = atob(b64)
+  const bytes = new Uint8Array(binary.length)
+  const chunk = 0x8000
+  for (let i = 0; i < binary.length; i += chunk) {
+    const end = Math.min(i + chunk, binary.length)
+    for (let j = i; j < end; j++) bytes[j] = binary.charCodeAt(j)
+  }
+  return bytes
 }
 
 async function fetchBytes(url: URL, onProgress: (percent: number) => void): Promise<Uint8Array> {

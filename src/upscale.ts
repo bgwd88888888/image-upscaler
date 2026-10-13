@@ -1,11 +1,14 @@
+import LanczosWorker from './lanczos.worker.ts?worker&inline'
 import {
   OUTPUT_LONG_SIDE,
+  resizeRgbaLanczos,
   SHARPEN_AMOUNT,
   targetOutputSize,
   type OutputPreset,
   type SharpenLevel,
 } from './lanczos.ts'
 import type { AiBackend } from './realesrgan.ts'
+import RealEsrganWorker from './realesrgan.worker.ts?worker&inline'
 
 export type EnhanceMode = 'classic' | 'ai' | 'ai-max'
 export type UpscaleBackend = 'lanczos' | AiBackend
@@ -135,13 +138,66 @@ export function upscaleImage(
       if (cancelled) return
 
       const target = targetOutputSize(source.originalWidth, source.originalHeight, preset)
-      worker =
-        usesAi
-          ? new Worker(new URL('./realesrgan.worker.ts', import.meta.url), { type: 'module' })
-          : new Worker(new URL('./lanczos.worker.ts', import.meta.url), { type: 'module' })
+      const pixels = new Uint8ClampedArray(source.data.data)
+      const classicPixels = usesAi ? null : pixels.slice()
+      let workerStarted = false
+
+      const finishClassic = async (src: Uint8ClampedArray) => {
+        try {
+          await new Promise((resolve) => {
+            setTimeout(resolve, 0)
+          })
+          if (cancelled) return
+          onStatus({ phase: 'resizing', percent: 0 })
+          const out = resizeRgbaLanczos(src, source.data.width, source.data.height, target.width, target.height, {
+            sharpen: SHARPEN_AMOUNT[sharpen],
+            onProgress: (percent) => {
+              if (!cancelled) onStatus({ phase: 'resizing', percent })
+            },
+          })
+          if (cancelled) return
+          const raw = out.buffer
+          if (!(raw instanceof ArrayBuffer)) throw new Error('经典高清输出缓冲区异常')
+          onStatus({ phase: 'encoding' })
+          const url = await encodePng(new ImageData(new Uint8ClampedArray(raw, out.byteOffset, out.length), target.width, target.height))
+          if (cancelled) {
+            URL.revokeObjectURL(url)
+            return
+          }
+          objectUrl = url
+          onStatus({
+            phase: 'ready',
+            width: target.width,
+            height: target.height,
+            url,
+            mode,
+            backend: 'lanczos',
+          })
+        } catch (error) {
+          if (cancelled) return
+          const message = error instanceof Error ? error.message : '经典高清失败'
+          onStatus({ phase: 'error', message })
+        }
+      }
+
+      if (!usesAi && location.protocol === 'file:') {
+        await finishClassic(pixels)
+        return
+      }
+
+      try {
+        worker = usesAi ? new RealEsrganWorker() : new LanczosWorker()
+      } catch (error) {
+        if (!usesAi && classicPixels) {
+          await finishClassic(classicPixels)
+          return
+        }
+        throw error
+      }
 
       worker.onmessage = (event: MessageEvent<WorkerOut>) => {
         if (cancelled) return
+        workerStarted = true
         const msg = event.data
         if (msg.type === 'progress') {
           if (!('stage' in msg)) {
@@ -195,14 +251,19 @@ export function upscaleImage(
       }
 
       worker.onerror = () => {
-        if (cancelled) return
+        if (cancelled || workerStarted) return
+        worker?.terminate()
+        worker = null
+        if (!usesAi && classicPixels) {
+          void finishClassic(classicPixels)
+          return
+        }
         onStatus({
           phase: 'error',
-          message: usesAi ? 'AI Worker 运行失败，请切换经典高清重试' : 'Lanczos Worker 运行失败',
+          message: 'AI Worker 运行失败，请切换经典高清重试',
         })
       }
 
-      const pixels = source.data.data.slice()
       const request =
         usesAi
           ? {
