@@ -1,0 +1,27 @@
+{
+  "name": "photo-2k",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 43180",
+    "build": "tsc -b && vite build",
+    "check": "node --experimental-strip-types src/lanczos.check.ts && node --experimental-strip-types src/realesrgan.check.ts",
+    "lint": "oxlint src vite.config.ts",
+    "preview": "vite preview --host 0.0.0.0 --port 43180"
+  },
+  "dependencies": {
+    "onnxruntime-web": "^1.30.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "oxlint": "^1.81.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0"
+  }
+}
